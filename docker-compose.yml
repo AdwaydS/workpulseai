@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: workpulse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: workpulse
+      POSTGRES_PASSWORD: workpulse_secret
+      POSTGRES_DB: workpulse_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workpulse -d workpulse_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: workpulse-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    container_name: workpulse-api
+    restart: unless-stopped
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 2
+    environment:
+      DATABASE_URL: postgresql://workpulse:workpulse_secret@db:5432/workpulse_db
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-in-production}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-jwt-dev-secret-change-in-production}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+      - uploads_data:/app/uploads
+
+  app:
+    build: .
+    container_name: workpulse-app
+    restart: unless-stopped
+    command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --browser.gatherUsageStats=false
+    environment:
+      DATABASE_URL: postgresql://workpulse:workpulse_secret@db:5432/workpulse_db
+      API_BASE_URL: http://api:8000
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-in-production}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-jwt-dev-secret-change-in-production}
+    ports:
+      - "8501:8501"
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    volumes:
+      - ./:/app
+      - uploads_data:/app/uploads
+
+volumes:
+  postgres_data:
+  uploads_data:
